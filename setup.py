@@ -24,7 +24,9 @@ except IOError:
     README = CHANGES = ''
 
 install_requires = [
+    'limone_zodb',
     'pyramid>=1.1',
+    'repoze.folder',
     ]
 
 
