@@ -26,6 +26,7 @@ from colander import TupleSchema
 from colander import deferred
 from colander import null
 
+from deform.i18n import _
 from deform.widget import CheckedInputWidget
 from deform.widget import CheckedPasswordWidget
 from deform.widget import TextInputWidget
@@ -67,9 +68,52 @@ email_widget = CheckedInputWidget(
     size = 40
     )
 
+class Password(String):
+    """
+    TODO: document and test me
+    TODO: figure out encoding madness
+    """
+    def __init__(self, encoding=None, min=None, max=None):
+        self.encoding = encoding
+        self.min = min
+        self.max = max
+
+    def deserialize(self, node, cstruct):
+        if not cstruct:
+            return null
+
+        try:
+            result = cstruct
+            if not isinstance(result, unicode):
+                if self.encoding:
+                    result = unicode(str(cstruct), self.encoding)
+                else:
+                    result = unicode(cstruct)
+        except Exception, e:
+            raise Invalid(node,
+                          _('${val} is not a string: %{err}',
+                            mapping={'val':cstruct, 'err':e}))
+
+        if self.min is not None:
+            if len(result) < self.min:
+                min_err = _('Shorter than minimum length ${min}',
+                            mapping={'min':self.min})
+                raise Invalid(node, min_err)
+
+        if self.max is not None:
+            if len(result) > self.max:
+                max_err = _('Longer than maximum length ${max}',
+                            mapping={'max':self.max})
+                raise Invalid(node, max_err)
+
+        import pdb; pdb.set_trace()
+
+        return _encode_password(result)
+
+
 
 @content_schema
-class UserSchema(MappingSchema):
+class User(MappingSchema):
     userid = SchemaNode(String(),
                      title="Username",
                      description="The name of the participant",
@@ -82,12 +126,9 @@ class UserSchema(MappingSchema):
                        description='Type your email address and confirm it',
                        validator=Email(),
                        widget=email_widget)
-    password = SchemaNode(String(),
-                          validator=Length(min=6),
+    password = SchemaNode(Password(min=6),
                           widget = CheckedPasswordWidget(size=40),
                           description = "Type your password and confirm it")
-    ## If limone content types are to be dumb types then maybe we need a widget
-    ## that serializes the password before persisting it.
     # groups = SchemaNode(TupleSchema(),
     #                     title = "Groups",
     #                     description="The groups this user is a member of",
@@ -97,22 +138,16 @@ class UserSchema(MappingSchema):
 
 
 
-@content_type(UserSchema)
-class User(Persistent):
-    def _encode_password(self, password):
-        settings = get_settings()
-        return hmac.new(settings['secret'], password, sha256).hexdigest()
+def _encode_password(password):
+    settings = get_settings()
+    ## get this secret key from somewhere since the settings come from somewhere else
+    ## return hmac.new(settings['secret'], password, sha256).hexdigest()
+    return hmac.new(u'secret key that comes from somewhere not in settings',
+                    password,
+                    sha256).hexdigest()
 
-    def check_password(self, challenge_password):
-        return self._encode_password(challenge_password) == self.password
-
-    @property
-    def password(self):
-        return self._password
-
-    @password.setter
-    def password(self, password):
-        self._password = self._encode_password(password)
+def check_password(challenge_password, password):
+    return _encode_password(challenge_password) == password
 
 
 def includeme(config):
@@ -134,7 +169,7 @@ def setup_users(site, users):
     uf = site['users']
 
     for user in users:
-        uf[user['userid']] = UserSchema.deserialize(user)
+        uf[user['userid']] = User.deserialize(user)
         return uf[user['userid']].userid
 
 def add_user(request, user):
@@ -163,7 +198,7 @@ def login(request):
         password = request.params['password']
         user = request.root['users'].get(login, None)
         if user:
-            valid = user.check_password(password)
+            valid = check_password(unicode(password), user.password)
             if valid:
                 headers = remember(request, login)
                 user.last_login = datetime.utcnow().strftime(TS_FORMAT)

@@ -24,6 +24,8 @@ except IOError:
     README = CHANGES = ''
 
 install_requires = [
+    'deform',
+    'colander',
     'limone_zodb',
     'pyramid>=1.1',
     'repoze.folder',
