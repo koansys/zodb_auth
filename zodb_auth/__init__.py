@@ -1,4 +1,4 @@
-import datetime
+from datetime import datetime
 
 from hashlib import sha256
 import hmac
@@ -21,20 +21,18 @@ from colander import Invalid
 from colander import Length
 from colander import MappingSchema
 from colander import SchemaNode
+from colander import SequenceSchema
 from colander import String
-from colander import TupleSchema
+from colander import Tuple
 from colander import deferred
 from colander import null
 
-from deform.i18n import _
 from deform.widget import CheckedInputWidget
 from deform.widget import CheckedPasswordWidget
 from deform.widget import TextInputWidget
 
 from limone_zodb import content_schema
-from limone_zodb import content_type
 
-from persistent import Persistent
 
 ## TODO: get ts from settings?
 TS_FORMAT = "%Y-%m-%d %H:%M:%S.%f"
@@ -62,62 +60,30 @@ def deferred_userid_validator(node, kw):
     return validate_userid
 
 
+def validate_userid(node, value):
+    if len(value) < 4 or len(value) > 24:
+        raise Invalid(node,
+                      "Length of user name must be between 4 and \
+                      24 lowercase alphanumeric characters")
+    if not value.replace('_', '').isalnum() or not value.islower():
+        raise Invalid(node,
+                      "Only lowercase numbers, letters and \
+                      underscores are permitted")
+    if not value[0].isalpha():
+        raise Invalid(node,
+                      "The username must start with a letter")
+
+
 email_widget = CheckedInputWidget(
     subject = "Email",
     confirm_subject = "Confirm Email",
     size = 40
     )
 
-class Password(String):
-    """
-    TODO: document and test me
-    TODO: figure out encoding madness
-    """
-    def __init__(self, encoding=None, min=None, max=None):
-        self.encoding = encoding
-        self.min = min
-        self.max = max
 
-    def deserialize(self, node, cstruct):
-        if not cstruct:
-            return null
-
-        try:
-            result = cstruct
-            if not isinstance(result, unicode):
-                if self.encoding:
-                    result = unicode(str(cstruct), self.encoding)
-                else:
-                    result = unicode(cstruct)
-        except Exception, e:
-            raise Invalid(node,
-                          _('${val} is not a string: %{err}',
-                            mapping={'val':cstruct, 'err':e}))
-
-        if self.min is not None:
-            if len(result) < self.min:
-                min_err = _('Shorter than minimum length ${min}',
-                            mapping={'min':self.min})
-                raise Invalid(node, min_err)
-
-        if self.max is not None:
-            if len(result) > self.max:
-                max_err = _('Longer than maximum length ${max}',
-                            mapping={'max':self.max})
-                raise Invalid(node, max_err)
-
-        import pdb; pdb.set_trace()
-
-        return _encode_password(result)
-
-
-
-@content_schema
-class User(MappingSchema):
+class UserSchema(MappingSchema):
     userid = SchemaNode(String(),
-                     title="Username",
-                     description="The name of the participant",
-                     validator=deferred_userid_validator)
+                        validator=validate_userid)
     display_name = SchemaNode(String(), missing=null,
                               title="Display Name",
                               widget=TextInputWidget(size=40))
@@ -126,15 +92,23 @@ class User(MappingSchema):
                        description='Type your email address and confirm it',
                        validator=Email(),
                        widget=email_widget)
-    password = SchemaNode(Password(min=6),
+    password = SchemaNode(String(),
                           widget = CheckedPasswordWidget(size=40),
-                          description = "Type your password and confirm it")
-    # groups = SchemaNode(TupleSchema(),
-    #                     title = "Groups",
-    #                     description="The groups this user is a member of",
-    #                     missing = (),
-    #                     # widget = TODO: What deform widget to use?
-    #                     )
+                          description = "Type your password and confirm it",
+                          validator=Length(min=6))
+
+class Groups(SequenceSchema):
+    group = SchemaNode(Tuple, missing=())
+
+@content_schema
+class User(MappingSchema):
+    userid = SchemaNode(String(),
+                        validator=deferred_userid_validator)
+    display_name = SchemaNode(String(), missing=null)
+    email = SchemaNode(String(), validator=Email())
+    password_hmac = SchemaNode(String(),)
+    groups = Groups(missing=())
+    last_login = SchemaNode(String(),missing=null)
 
 
 
@@ -142,7 +116,7 @@ def _encode_password(password):
     settings = get_settings()
     ## get this secret key from somewhere since the settings come from somewhere else
     ## return hmac.new(settings['secret'], password, sha256).hexdigest()
-    return hmac.new(u'secret key that comes from somewhere not in settings',
+    return hmac.new('secret key that comes from somewhere not in settings',
                     password,
                     sha256).hexdigest()
 
@@ -174,7 +148,7 @@ def setup_users(site, users):
 
 def add_user(request, user):
     ## Just do it in the view?
-    request.root['users'][user.userid] = User.deserialize(user)
+    request.root['users'][user.userid] = User(**user)
     return user.userid
 
 
@@ -198,7 +172,7 @@ def login(request):
         password = request.params['password']
         user = request.root['users'].get(login, None)
         if user:
-            valid = check_password(unicode(password), user.password)
+            valid = check_password(unicode(password), user.password_hmac)
             if valid:
                 headers = remember(request, login)
                 user.last_login = datetime.utcnow().strftime(TS_FORMAT)
