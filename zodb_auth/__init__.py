@@ -102,13 +102,13 @@ class Groups(SequenceSchema):
 
 @content_schema
 class User(MappingSchema):
-    userid = SchemaNode(String(),
-                        validator=deferred_userid_validator)
+    __acl__ = Groups(missing=())
     display_name = SchemaNode(String(), missing=null)
     email = SchemaNode(String(), validator=Email())
-    password_hmac = SchemaNode(String(),)
-    groups = Groups(missing=())
     last_login = SchemaNode(String(),missing=null)
+    password_hmac = SchemaNode(String(),)
+    userid = SchemaNode(String(),
+                        validator=deferred_userid_validator)
 
 
 
